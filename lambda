@@ -1,0 +1,87 @@
+import boto3
+import csv
+import io
+from datetime import datetime
+
+s3 = boto3.client('s3')
+
+PROCESSED_BUCKET = 'bucket-processed-data-01'
+
+def lambda_handler(event, context):
+
+    source_bucket = event['Records'][0]['s3']['bucket']['name']
+    source_key = event['Records'][0]['s3']['object']['key']
+
+    print(f"Processing file: {source_key}")
+    print(f"Source bucket: {source_bucket}")
+
+    response = s3.get_object(
+        Bucket=source_bucket,
+        Key=source_key
+    )
+
+    content = response['Body'].read().decode('utf-8')
+
+    reader = csv.DictReader(io.StringIO(content))
+
+    cleaned_rows = []
+    seen = set()
+
+    for row in reader:
+
+        customer_id = row['Customer ID']
+
+        if customer_id in seen:
+            continue
+
+        seen.add(customer_id)
+
+        row['Subscription Status'] = (
+            row['Subscription Status']
+            if row['Subscription Status']
+            else 'Unknown'
+        )
+
+        row['Previous Purchases'] = (
+            row['Previous Purchases']
+            if row['Previous Purchases']
+            else '0'
+        )
+
+        row['Frequency of Purchases'] = (
+            row['Frequency of Purchases']
+            if row['Frequency of Purchases']
+            else 'Not Specified'
+        )
+
+        row['Processed_Date'] = datetime.utcnow().isoformat()
+
+        cleaned_rows.append(row)
+
+    output = io.StringIO()
+
+    fieldnames = list(cleaned_rows[0].keys())
+
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fieldnames
+    )
+
+    writer.writeheader()
+
+    for row in cleaned_rows:
+        writer.writerow(row)
+
+    s3.put_object(
+        Bucket=PROCESSED_BUCKET,
+        Key='cleaned_customer.csv',
+        Body=output.getvalue()
+    )
+
+    print(f"Rows after cleaning: {len(cleaned_rows)}")
+    print("File successfully uploaded to processed bucket")
+
+    return {
+        'statusCode': 200,
+        'body': 'File processed successfully'
+    }
